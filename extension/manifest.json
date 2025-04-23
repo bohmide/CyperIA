@@ -3,7 +3,15 @@
   "name": "Gmail Sender Verifier",
   "version": "1.0",
   "permissions": ["activeTab", "scripting"],
-  "host_permissions": ["*://mail.google.com/*"],
+  "host_permissions": ["http://localhost:5000/*","*://mail.google.com/*"],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon_green.png",
+      "48": "icons/icon_green.png",
+      "128": "icons/icon_green.png"
+    }
+  },
   "content_scripts": [
     {
       "matches": ["*://mail.google.com/*"],

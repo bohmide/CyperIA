@@ -1,4 +1,5 @@
-// Extract URLs from both <a> tags and plain text in the email body
+let analyzedUrls = [];
+
 function extractURLsFromBody(container) {
     const urls = new Set();
 
@@ -15,9 +16,7 @@ function extractURLsFromBody(container) {
     return Array.from(urls);
 }
 
-// Add indicator next to each URL to show phishing status
 function addIndicator(linkElement, isPhishing) {
-    
     const indicator = document.createElement("span");
     indicator.textContent = isPhishing ? "⚠️" : "✅";
     indicator.style.marginLeft = "6px";
@@ -28,7 +27,6 @@ function addIndicator(linkElement, isPhishing) {
     linkElement.parentNode.insertBefore(indicator, linkElement.nextSibling);
 }
 
-// Add an icon next to the sender's name indicating whether the sender is safe
 function addSenderIcon(isSafe) {
     const senderSpan = document.querySelector('.gD, [data-testid="sender-name"]');
     
@@ -46,26 +44,42 @@ function addSenderIcon(isSafe) {
     }
 }
 
-// Check URL via Flask server
 function checkURL(linkElement, url) {
+    if (analyzedUrls.some(entry => entry.url === url)) return;
+
+    analyzedUrls.push({
+        url: url,
+        isPhishing: null,
+        element: linkElement,
+        timestamp: Date.now()
+    });
+
     fetch("http://localhost:5000/predict", {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: url })
     })
     .then(response => response.json())
     .then(data => {
-        console.log("Checked URL:", url, "→", data);
-        addIndicator(linkElement, data.is_phishing);  // Add phishing indicator based on response
+        const entry = analyzedUrls.find(entry => entry.url === url);
+        if (entry) {
+            entry.isPhishing = data.is_phishing;
+            addIndicator(entry.element, data.is_phishing);
+            const allAnalyzed = analyzedUrls.filter(e => e.isPhishing !== null);
+            chrome.runtime.sendMessage({
+                action: "updateResults",
+                results: allAnalyzed
+            });
+            const hasPhishing = allAnalyzed.some(e => e.isPhishing);
+            addSenderIcon(!hasPhishing);
+        }
     })
     .catch(error => {
         console.error("Failed to check URL:", url, error);
+        analyzedUrls = analyzedUrls.filter(entry => entry.url !== url);
     });
 }
 
-// Process and scan links only inside the email body
 function processEmailLinks() {
     const emailBodyDiv = document.querySelector('div.a3s, div.a3s.aiL');  // Email body container
     if (!emailBodyDiv) return;
@@ -80,64 +94,65 @@ function processEmailLinks() {
         }
     });
 
-    console.log("URLs found:", urls);
     return urls;
 }
 
-// Get sender information and check if the sender is safe
 function checkSender() {
     const senderSpan = document.querySelector('.gD, [data-testid="sender-name"]');
     if (!senderSpan) return;
 
     const senderEmail = senderSpan.getAttribute('email') || senderSpan.getAttribute('name');
-    console.log('Sender Email:', senderEmail);
-
-    // Extract URLs related to the sender's email
     const senderUrls = extractURLsFromBody(document.body);
-    let isSafe = true;
 
-    // Check each URL related to the sender
     senderUrls.forEach(url => {
+        if (analyzedUrls.some(entry => entry.url === url)) return;
+
+        analyzedUrls.push({
+            url: url,
+            isPhishing: null,
+            source: `Sender: ${senderEmail}`,
+            timestamp: Date.now()
+        });
+
         fetch("http://localhost:5000/predict", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ url: url })
         })
         .then(response => response.json())
         .then(data => {
-            if (data.is_phishing) {
-                isSafe = false;
+            const entry = analyzedUrls.find(entry => entry.url === url);
+            if (entry) {
+                entry.isPhishing = data.is_phishing;
+                const allAnalyzed = analyzedUrls.filter(e => e.isPhishing !== null);
+                chrome.runtime.sendMessage({
+                    action: "updateResults",
+                    results: allAnalyzed
+                });
+                const hasPhishing = allAnalyzed.some(e => e.isPhishing);
+                addSenderIcon(!hasPhishing);
             }
-            // Once we have checked all URLs, update the sender's icon
-            addSenderIcon(isSafe);
         })
         .catch(error => {
             console.error("Failed to check sender URL:", url, error);
+            analyzedUrls = analyzedUrls.filter(entry => entry.url !== url);
         });
     });
 }
 
-// Main function to start checking only the body content
 async function main() {
-    // Wait for Gmail to fully load and get the email body
     const emailBodyDiv = await waitForEmailBody();
-
     if (emailBodyDiv) {
-        console.log('✅ Email body loaded. Monitoring content for phishing links...');
         processEmailLinks();
         checkSender();  // Check sender safety based on URLs
     }
 
-    // Periodically check for new content in the email body
     setInterval(() => {
         processEmailLinks();
         checkSender();  // Periodically check sender safety as well
     }, 5000); // every 5 seconds, adjust as needed
 }
 
-// Wait until the email body is available (wait for Gmail to load the content)
 function waitForEmailBody() {
     return new Promise(resolve => {
         const observer = new MutationObserver(() => {
