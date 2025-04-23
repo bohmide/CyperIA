@@ -14,6 +14,7 @@ model = model_data['model']
 # ---------------------
 # URL Feature Extractor
 # ---------------------
+
 def extract_url_features(url):
     try:
         parsed = urlparse(url)
